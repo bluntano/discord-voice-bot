@@ -679,11 +679,11 @@ function processRawToWav(filepath, outputpath, cb) {
         cb(data);
         //return data;
 
-        return delay(10000) .then (function() {
+        return delay(10000).then (function() {
           var findRemoveSync = require('find-remove');
-            var removeWav = findRemoveSync('./recordings', {age: {seconds: 7}, extensions: '.wav', limit: 100});
-            var removeRaw = findRemoveSync('./recordings', {age: {seconds: 7}, extensions: '.raw_pcm', limit: 100});
-            var removeOpus = findRemoveSync('./recordings', {age: {seconds: 7}, extensions: '.opus_string', limit: 100});
+            var removeWav = findRemoveSync('./recordings', {age: {seconds: 180}, extensions: '.wav', limit: 100});
+            var removeRaw = findRemoveSync('./recordings', {age: {seconds: 180}, extensions: '.raw_pcm', limit: 100});
+            var removeOpus = findRemoveSync('./recordings', {age: {seconds: 180}, extensions: '.opus_string', limit: 100});
           })
         
     })
