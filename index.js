@@ -3,7 +3,7 @@ const ytdl = require("ytdl-core");
 const request = require("request");
 const getYoutubeID = require("get-youtube-id");
 const fetchVideoInfo = require("youtube-info");
-const ffmpeg = require('ffmpeg');
+const ffmpeg = require('fluent-ffmpeg');
 const WitSpeech = require('node-witai-speech');
 const decode = require('./decodeOpus.js');
 const fs = require('fs');
@@ -13,9 +13,18 @@ const del = require('./delete.js');
 
 var config = JSON.parse(fs.readFileSync("./settings.json", "utf-8"));
 
+var express = require('express')
+var app = express()
+
+app.get('/', function (req, res) {
+  res.send('Hello World')
+})
+
+app.listen(3000)
+
 const WIT_API_KEY = config.wit_api_key;
 const YT_API_KEY = config.yt_api_key;
-const IMGUR_API_KEY = 'f16928f5fc813e9';
+const IMGUR_API_KEY = 'a303c62c3153ed1';
 const bot_controller = config.bot_controller;
 const prefix = config.prefix;
 const discord_token = config.discord_token;
@@ -23,6 +32,7 @@ const content_type = config.content_type;
 
 const client = new Discord.Client();
 const recordingsPath = makeDir('./recordings');
+
 var queue = [];
 var isPlaying = false;
 var dispatcher = null;
@@ -34,18 +44,6 @@ var listenStreams = new Map();
 var skipReq = 0;
 var skippers = [];
 var listening = false;
-
-// express
-
-const express = require('express')
-const app = express()
-const port = 3000
-
-app.get('/', (req, res) => res.send('Hello World!'))
-
-app.listen(port, () => console.log(`Example app listening on port ${port}!`))
-
-// voice bot actions below
 
 client.login(discord_token);
 
@@ -112,12 +110,14 @@ function handleMessage(message) {
       textChannel = message.channel;
       commandRepeat(message.member, message.content);
       break;
-    case 'image':
+    case 'photo':
       textChannel = message.channel;
       commandImage(message.member, message.content);
       break;
+    case 'delete':
+      commandDelete(message.member, message.content);
     default:
-      message.reply(" command not recognized! Type '!help' for a list of commands.");
+      return;
   }
 }
 
@@ -131,13 +131,17 @@ function handleSpeech(member, speech) {
   }
   switch (command) {
     case 'listen':
-      speechListen();
+      commandListen();
+      break;
+    case 'volume':
+      commandVolume(member, speech);
       break;
     case 'leave':
-      speechLeave();
+    case 'exit':
+      commandLeave();
       break;
     case 'play':
-      commandPlay(member, speech);
+      commandPlay(member,speech);
       break;
     case 'playlist':
       commandPlaylist(member, speech);
@@ -162,9 +166,14 @@ function handleSpeech(member, speech) {
     case 'repeat':
       commandRepeat(member, speech);
       break;
-    case 'image':
+    case 'photo':
       commandImage(member, speech);
       break;
+    case 'delete':
+      commandDelete(member, speech);
+    case 'restart':
+      commandRestart();
+      break;   
     default:
   }
 }
@@ -213,6 +222,18 @@ function commandPlay(member, msg) {
   if (args.length != 0) playRequest(args);
 }
 
+function commandRick(member, msg) {
+  if (!member.voiceChannel) {
+    return;
+  }
+  if (!voiceChannel) {
+    voiceChannel = member.voiceChannel;
+  }
+  var args = msg.toLowerCase().split(' ').slice(1).join(" ");
+  args = reduceTrailingWhitespace(args);
+  if (args.length != 0) playRequestToo(args);
+}
+
 function commandPlaylist(member, msg) {
   if (!member.voiceChannel) {
     return;
@@ -240,30 +261,72 @@ function commandPlaylist(member, msg) {
 function commandSkip() {
   if (queue.length > 0) {
     skipSong();
-    textChannel.send("Skipping current song!");
+    textChannel.send(`\`⏭ Skipping current song!\``)
+    .then(textChannel => {
+    textChannel.delete(3000)
+    });
   }
 }
 
 function commandPause() {
   if (dispatcher) {
     dispatcher.pause();
+        textChannel.send(`\`⏸️ Paused the track!\``)
   }
 }
 
 function commandResume() {
   if (dispatcher) {
     dispatcher.resume();
+    textChannel.send(`\`▶️ Resuming the track!\``)
+    
   }
 }
 
-function commandVolume(msg) {
+function commandVolume(msg, member) {
   var args = msg.toLowerCase().split(' ').slice(1).join(" ");
   var vol = parseInt(args);
   if (!isNaN(vol)
-    && vol <= 100
+    && vol <= 1000000000
     && vol >= 0) {
     dispatcher.setVolume(vol / 100.0);
   }
+}
+
+function commandRestart() {
+  listening = false;
+  queue = []
+  if (dispatcher) {
+    dispatcher.end();
+  }
+  dispatcher = null;
+  commandStop();
+  if (listenReceiver) {
+    listenReceiver.destroy();
+    listenReceiver = null;
+  }
+  if (listenConnection) {
+    listenConnection.disconnect();
+    listenConnection = null;
+  }
+  if (voiceChannel) {
+    voiceChannel.leave();
+    voiceChannel = null;
+  }
+  console.log("restarting the bot...");
+  process.exit();
+}
+
+function commandDelete() {
+     var fs = require('fs-extra'); //var fs = require('fs')
+    fs.remove('./recordings', function(err){
+  if (err) return console.error(err);
+
+  console.log("Recordings deleted!")
+
+});
+
+fs.removeSync('./recordings');
 }
 
 function commandListen(message) {
@@ -272,17 +335,23 @@ function commandListen(message) {
     return;
   }
   if (!member.voiceChannel) {
-    message.reply(" you need to be in a voice channel first.")
+    message.reply(`\` you need to be in the voice channel first!\``)
+    .then(message => {
+    message.delete(5000)
+    });
     return;
   }
   if (listening) {
-    message.reply(" a voice channel is already being listened to!");
+    message.reply(`\` a voice channel is already being listened to!\``)
+    .then(message => {
+    message.delete(5000)
+    });
     return;
   }
 
   listening = true;
   voiceChannel = member.voiceChannel;
-  textChannel.send('Listening in to **' + member.voiceChannel.name + '**!');
+  textChannel.send(`\`🎙️ Listening in to ${member.voiceChannel.name}! It starts listening to you if you start off with ${prefix}play <songname>\``);
 
   var recordingsPath = path.join('.', 'recordings');
   makeDir(recordingsPath);
@@ -315,8 +384,11 @@ function commandStop() {
     listening = false;
     listenReceiver.destroy();
     listenReceiver = null;
-    textChannel.send("Stopped listening!");
-  }
+    textChannel.send(`\`🛑 Stopped listening\``)
+    .then(textChannel => {
+    textChannel.delete(5000)
+    });
+}
 }
 
 function commandLeave() {
@@ -339,6 +411,15 @@ function commandLeave() {
     voiceChannel.leave();
     voiceChannel = null;
   }
+  var fs = require('fs-extra'); //var fs = require('fs')
+
+fs.remove('./recordings', function(err){
+  if (err) return console.error(err);
+
+  console.log("🚮 Recordings deleted on disconnect from VC!")
+});
+
+fs.removeSync('./recordings');
 }
 
 function commandReset() {
@@ -347,20 +428,26 @@ function commandReset() {
     if (dispatcher) {
       dispatcher.end();
     }
-    textChannel.send("The queue has been cleared.");
+    textChannel.send(`\`The queue has been cleared.\``)
+    .then(textChannel => {
+    textChannel.delete(3000)
+    });
   }
 }
 
 function commandRepeat(member, msg) {
   if (!member.voiceChannel) {
-    textChannel.send(" you need to be in a voice channel first.")
+    textChannel.send(`\` you need to be in a voice channel first.\``)
+    .then(textChannel => {
+    textChannel.delete(3000)
+    });
     return;
   }
 
   msg = msg.toLowerCase().split(' ').slice(1).join(" ");
   voiceChannel = member.voiceChannel;
   voiceChannel.join().then((connection) => {
-    textChannel.send(msg, {
+    textChannel.send(`\`🔂 Repeating a song!\``, {
       tts: true
     });
   });
@@ -373,6 +460,10 @@ function commandImage(member, msg) {
     ext = '+ext:gif';
   }
   console.log("searching for image!");
+  textChannel.send(`\`🔍 Hold on, looking for image!\``)
+    .then(textChannel => {
+    textChannel.delete(3000)
+  })
   const options = {
     url: 'https://api.imgur.com/3/gallery/search/top/week/0/?q=' + args + ext,
     headers: {
@@ -383,7 +474,6 @@ function commandImage(member, msg) {
 
     let json = JSON.parse(body);
     if (!body || json.data.length < 1) {
-      textChannel.send("No results were found!");
       return;
     }
     let item = getRandomItem(json.data);
@@ -395,6 +485,7 @@ function commandImage(member, msg) {
       link = item.link;
     }
     var embed = new Discord.RichEmbed()
+      .setColor(0xffbaf1)
       .setImage(link);
     textChannel.send({embed});
   });
@@ -410,13 +501,13 @@ function playRequest(args) {
   if (queue.length > 0 || isPlaying) {
     getID(args, function (id) {
       if (id == null) {
-        textChannel.send("Sorry, no search results turned up");
+        textChannel.send(`\`❌ Sorry, no search results turned up\``);
       }
       else {
         add_to_queue(id);
         fetchVideoInfo(id, function(err, videoInfo) {
           if (err) throw new Error(err);
-          textChannel.send("Added to queue **" + videoInfo.title + "**");
+          textChannel.send(`\`✔️ Added to queue: "${videoInfo.title}"\``);
         });
       }
     });
@@ -424,7 +515,7 @@ function playRequest(args) {
   else {
     getID(args, function(id) {
       if (id == null) {
-        textChannel.send("Sorry, no search results turned up");
+        textChannel.send(`\`❌ Sorry, no search results turned up\``);
       }
       else {
         isPlaying = true;
@@ -440,10 +531,10 @@ function playlistRequest(args) {
   if (queue.length > 0 || isPlaying) {
     search_playlist(args, function(body) {
       if (!body) {
-        textChannel.send("Sorry, no search results turned up");
+        textChannel.send(`\`❌ Sorry, no search results turned up\``);
       }
       else {
-        textChannel.send("Playlist for '**" + args + "**' added to queue");
+        textChannel.send(`\`Playlist for '${args}' added to queue\``);
         json = JSON.parse(body);
         isPlaying = true;
         items = shuffle(json.items);
@@ -456,7 +547,7 @@ function playlistRequest(args) {
   else {
     search_playlist(args, function(body) {
       if (!body) {
-        textChannel.send("Sorry, no search results turned up");
+        textChannel.send(`\`❌ Sorry, no search results turned up\``);
       }
       else {
         json = JSON.parse(body);
@@ -484,7 +575,7 @@ function playMusic(id) {
     dispatcher = connection.playStream(stream);
     fetchVideoInfo(id, function(err, videoInfo) {
       if (err) throw new Error(err);
-      textChannel.send("Now playing **" + videoInfo.title + "**");
+      textChannel.send(`\`▶️ Now playing: "${videoInfo.title}"\``);
     });
     dispatcher.on('end', function() {
       dispatcher = null;
@@ -555,9 +646,9 @@ function search_playlist(query, callback) {
 }
 
 function delay(t, v) {
-  return new Promise(function(resolve) { 
-      setTimeout(resolve.bind(null, v), t)
-  });
+   return new Promise(function(resolve) { 
+       setTimeout(resolve.bind(null, v), t)
+   });
 }
 
 function processRawToWav(filepath, outputpath, cb) {
@@ -584,23 +675,26 @@ function processRawToWav(filepath, outputpath, cb) {
 
       // check in the promise for the completion of call to witai
       parseSpeech.then((data) => {
-        console.log("you said: " + data._text);
+        console.log("Translation: " + data._text);
         cb(data);
+        //return data;
 
-        // delete recordings and audio data that are older than 3 minutes
-        return delay(10000).then (function() {
+        return delay(10000) .then (function() {
           var findRemoveSync = require('find-remove');
-            var removeWav = findRemoveSync('./recordings', {age: {seconds: 180}, extensions: '.wav', limit: 100});
-            var removeRaw = findRemoveSync('./recordings', {age: {seconds: 180}, extensions: '.raw_pcm', limit: 100});
-            var removeOpus = findRemoveSync('./recordings', {age: {seconds: 180}, extensions: '.opus_string', limit: 100});
-        })
-      })
+            var removeWav = findRemoveSync('./recordings', {age: {seconds: 7}, extensions: '.wav', limit: 100});
+            var removeRaw = findRemoveSync('./recordings', {age: {seconds: 7}, extensions: '.raw_pcm', limit: 100});
+            var removeOpus = findRemoveSync('./recordings', {age: {seconds: 7}, extensions: '.opus_string', limit: 100});
+          })
+        
+    })
       .catch((err) => {
         console.log(err);
         cb(null);
         //return null;
+        
       })
     })
+            
     .on('error', function(err) {
         console.log('an error happened: ' + err.message);
     })
