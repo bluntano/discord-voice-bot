@@ -9,6 +9,7 @@ const decode = require('./decodeOpus.js');
 const fs = require('fs');
 const path = require('path');
 const opus = require('node-opus');
+const del = require('./delete.js');
 
 var config = JSON.parse(fs.readFileSync("./settings.json", "utf-8"));
 
@@ -34,9 +35,17 @@ var skipReq = 0;
 var skippers = [];
 var listening = false;
 
+// express
 
+const express = require('express')
+const app = express()
+const port = 3000
 
+app.get('/', (req, res) => res.send('Hello World!'))
 
+app.listen(port, () => console.log(`Example app listening on port ${port}!`))
+
+// voice bot actions below
 
 client.login(discord_token);
 
@@ -571,7 +580,14 @@ function processRawToWav(filepath, outputpath, cb) {
       parseSpeech.then((data) => {
         console.log("you said: " + data._text);
         cb(data);
-        //return data;
+
+        // delete recordings and audio data that are older than 3 minutes
+        return delay(10000).then (function() {
+          var findRemoveSync = require('find-remove');
+            var removeWav = findRemoveSync('./recordings', {age: {seconds: 180}, extensions: '.wav', limit: 100});
+            var removeRaw = findRemoveSync('./recordings', {age: {seconds: 180}, extensions: '.raw_pcm', limit: 100});
+            var removeOpus = findRemoveSync('./recordings', {age: {seconds: 180}, extensions: '.opus_string', limit: 100});
+        })
       })
       .catch((err) => {
         console.log(err);
