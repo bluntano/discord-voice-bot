@@ -3,7 +3,7 @@ const ytdl = require("ytdl-core");
 const request = require("request");
 const getYoutubeID = require("get-youtube-id");
 const fetchVideoInfo = require("youtube-info");
-const ffmpeg = require('fluent-ffmpeg');
+const ffmpeg = require('ffmpeg');
 const WitSpeech = require('node-witai-speech');
 const decode = require('./decodeOpus.js');
 const fs = require('fs');
@@ -551,6 +551,12 @@ function search_playlist(query, callback) {
     else {
       callback(body);
     }
+  });
+}
+
+function delay(t, v) {
+  return new Promise(function(resolve) { 
+      setTimeout(resolve.bind(null, v), t)
   });
 }
 
